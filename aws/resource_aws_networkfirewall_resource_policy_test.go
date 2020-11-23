@@ -10,34 +10,32 @@ import (
 	"github.com/hashicorp/aws-sdk-go-base/tfawserr"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
-	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 	"github.com/terraform-providers/terraform-provider-aws/aws/internal/service/networkfirewall/finder"
 )
 
 func TestAccAwsNetworkFirewallResourcePolicy_firewallPolicy(t *testing.T) {
-	var providers []*schema.Provider
 	rName := acctest.RandomWithPrefix("tf-acc-test")
 	resourceName := "aws_networkfirewall_resource_policy.test"
 
 	resource.ParallelTest(t, resource.TestCase{
-		PreCheck:          func() { testAccPreCheck(t) },
-		ProviderFactories: testAccProviderFactoriesAlternate(&providers),
-		CheckDestroy:      testAccCheckAwsNetworkFirewallResourcePolicyDestroy,
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckAwsNetworkFirewallResourcePolicyDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: testAccNetworkFirewallResourcePolicy_firewallPolicy(rName),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckAwsNetworkFirewallResourcePolicyExists(resourceName),
-					resource.TestCheckResourceAttrPair(resourceName, "resource_arn", "aws_iam_user.test", "arn"),
-					resource.TestMatchResourceAttr(resourceName, "policy", regexp.MustCompile(`\"Action\":[\"network\-firewall:ListFirewallPolicies\"]`)),
+					resource.TestCheckResourceAttrPair(resourceName, "resource_arn", "aws_networkfirewall_firewall_policy.test", "arn"),
+					resource.TestMatchResourceAttr(resourceName, "policy", regexp.MustCompile(`"Action":["network\\-firewall:ListFirewallPolicies"]`)),
 				),
 			},
 			{
 				Config: testAccNetworkFirewallResourcePolicy_firewallPolicy_updatePolicy(rName),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckAwsNetworkFirewallResourcePolicyExists(resourceName),
-					resource.TestMatchResourceAttr(resourceName, "policy", regexp.MustCompile(`\"Action\":[\"network\-firewall:ListFirewallPolicies\", \"network\-firewall:AssociateFirewallPolicy\"]`)),
+					resource.TestMatchResourceAttr(resourceName, "policy", regexp.MustCompile(`"Action":["network\\-firewall:ListFirewallPolicies","network\\-firewall:AssociateFirewallPolicy"]`)),
 				),
 			},
 			{
@@ -62,15 +60,15 @@ func TestAccAwsNetworkFirewallResourcePolicy_ruleGroup(t *testing.T) {
 				Config: testAccNetworkFirewallResourcePolicy_ruleGroup(rName),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckAwsNetworkFirewallResourcePolicyExists(resourceName),
-					resource.TestCheckResourceAttrPair(resourceName, "resource_arn", "aws_iam_user.test", "arn"),
-					resource.TestMatchResourceAttr(resourceName, "policy", regexp.MustCompile(`\"Action\":[\"network\-firewall:ListRuleGroups\"]`)),
+					resource.TestCheckResourceAttrPair(resourceName, "resource_arn", "aws_networkfirewall_rule_group.test", "arn"),
+					resource.TestMatchResourceAttr(resourceName, "policy", regexp.MustCompile(`"Action":["network\\-firewall:ListRuleGroups"]`)),
 				),
 			},
 			{
 				Config: testAccNetworkFirewallResourcePolicy_ruleGroup_updatePolicy(rName),
 				Check: resource.ComposeTestCheckFunc(
 					testAccCheckAwsNetworkFirewallResourcePolicyExists(resourceName),
-					resource.TestMatchResourceAttr(resourceName, "policy", regexp.MustCompile(`\"Action\":[\"network\-firewall:ListRuleGroups\", \"network\-firewall:CreateFirewallPolicy\"]`)),
+					resource.TestMatchResourceAttr(resourceName, "policy", regexp.MustCompile(`"Action":["network\\-firewall:ListRuleGroups", "network\\-firewall:CreateFirewallPolicy"]`)),
 				),
 			},
 			{
@@ -151,57 +149,37 @@ func testAccCheckAwsNetworkFirewallResourcePolicyExists(n string) resource.TestC
 }
 
 func testAccNetworkFirewallResourcePolicyFirewallPolicyBaseConfig(rName string) string {
-	return composeConfig(
-		testAccAlternateAccountProviderConfig(),
-		fmt.Sprintf(`
-data "aws_caller_identity" "alternate" {
-  provider = "awsalternate"
-}
+	return fmt.Sprintf(`
+data "aws_partition" "current" {}
+
+data "aws_caller_identity" "current" {}
 
 resource "aws_networkfirewall_firewall_policy" "test" {
-  name = %[1]q
+  name = %q
   firewall_policy {
     stateless_fragment_default_actions = ["aws:drop"]
     stateless_default_actions          = ["aws:pass"]
   }
 }
-
-resource "aws_ram_resource_share" "test" {
-  name                      = %[1]q
-  allow_external_principals = true
-
-  tags = {
-    Name = %[1]q
-  }
-}
-
-resource "aws_ram_resource_association" "test" {
-  resource_arn       = aws_networkfirewall_firewall_policy.test.arn
-  resource_share_arn = aws_ram_resource_share.test.id
-}
-`, rName))
+`, rName)
 }
 
 func testAccNetworkFirewallResourcePolicy_firewallPolicy(rName string) string {
 	return composeConfig(
 		testAccNetworkFirewallResourcePolicyFirewallPolicyBaseConfig(rName), `
 resource "aws_networkfirewall_resource_policy" "test" {
-  resource_arn = data.aws_caller_identity.alternate.arn
-  policy       = <<POLICY
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": "network-firewall:ListFirewallPolicies",
-      "Resource": "${aws_networkfirewall_firewall_policy.test.arn}"
-    }
-  ]
-}
-POLICY
-
-  depends_on = [aws_ram_resource_association.test]
+  resource_arn = aws_networkfirewall_firewall_policy.test.arn
+  policy = jsonencode({
+    Statement = [{
+      Action   = "network-firewall:ListFirewallPolicies"
+      Effect   = "Allow"
+      Resource = "${aws_networkfirewall_firewall_policy.test.arn}"
+      Principal = {
+        AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"
+      }
+    }]
+    Version = "2012-10-17"
+  })
 }
 `)
 }
@@ -210,48 +188,34 @@ func testAccNetworkFirewallResourcePolicy_firewallPolicy_updatePolicy(rName stri
 	return composeConfig(
 		testAccNetworkFirewallResourcePolicyFirewallPolicyBaseConfig(rName), `
 resource "aws_networkfirewall_resource_policy" "test" {
-  resource_arn = data.aws_caller_identity.alternate.arn
-  policy       = <<POLICY
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
+  resource_arn = aws_networkfirewall_firewall_policy.test.arn
+  policy = jsonencode({
+    Statement = [{
+      Action = [
         "network-firewall:ListFirewallPolicies",
-        "network-firewall:AssociateFirewallPolicy"
-      ],
-      "Resource": "${aws_networkfirewall_firewall_policy.test.arn}"
-    }
-  ]
+        "network-firewall:AssociateFirewallPolicy",
+      ]
+      Effect   = "Allow"
+      Resource = "${aws_networkfirewall_firewall_policy.test.arn}"
+      Principal = {
+        AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"
+      }
+    }]
+    Version = "2012-10-17"
+  })
 }
-POLICY
-}
-  depends_on = [aws_ram_resource_association.test]
 `)
 }
 
 func testAccNetworkFirewallResourcePolicyRuleGroupBaseConfig(rName string) string {
-	return composeConfig(
-		testAccAlternateAccountProviderConfig(),
-		fmt.Sprintf(`
-data "aws_caller_identity" "alternate" {
-  provider = "awsalternate"
-}
+	return fmt.Sprintf(`
+data "aws_partition" "current" {}
 
-resource "aws_ram_resource_share" "test" {
-  name                      = %[1]q
-  allow_external_principals = true
-
-  tags = {
-    Name = %[1]q
-  }
-}
+data "aws_caller_identity" "current" {}
 
 resource "aws_networkfirewall_rule_group" "test" {
   capacity = 100
-  name     = %[1]q
+  name     = %q
   type     = "STATEFUL"
   rule_group {
     rules_source {
@@ -263,34 +227,25 @@ resource "aws_networkfirewall_rule_group" "test" {
     }
   }
 }
-
-resource "aws_ram_resource_association" "test" {
-  resource_arn       = aws_networkfirewall_rule_group.test.arn
-  resource_share_arn = aws_ram_resource_share.test.id
-}
-`, rName))
+`, rName)
 }
 
 func testAccNetworkFirewallResourcePolicy_ruleGroup(rName string) string {
 	return composeConfig(
 		testAccNetworkFirewallResourcePolicyRuleGroupBaseConfig(rName), `
 resource "aws_networkfirewall_resource_policy" "test" {
-  resource_arn = data.aws_caller_identity.alternate.arn
-  policy       = <<POLICY
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": "network-firewall:ListRuleGroups",
-      "Resource": "${aws_networkfirewall_rule_group.test.arn}"
-    }
-  ]
-}
-POLICY
-
-  depends_on = [aws_ram_resource_association.test]
+  resource_arn = aws_networkfirewall_rule_group.test.arn
+  policy = jsonencode({
+    Statement = [{
+      Action   = "network-firewall:ListRuleGroups"
+      Effect   = "Allow"
+      Resource = "${aws_networkfirewall_rule_group.test.arn}"
+      Principal = {
+        AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"
+      }
+    }]
+    Version = "2012-10-17"
+  })
 }
 `)
 }
@@ -299,25 +254,18 @@ func testAccNetworkFirewallResourcePolicy_ruleGroup_updatePolicy(rName string) s
 	return composeConfig(
 		testAccNetworkFirewallResourcePolicyRuleGroupBaseConfig(rName), `
 resource "aws_networkfirewall_resource_policy" "test" {
-  resource_arn = data.aws_caller_identity.alternate.arn
-  policy       = <<POLICY
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Principal": "*",
-      "Action": [
-        "network-firewall:ListRuleGroups",
-        "network-firewall:CreateFirewallPolicy"
-      ],
-      "Resource": "${aws_networkfirewall_rule_group.test.arn}"
-    }
-  ]
-}
-POLICY
-
-  depends_on = [aws_ram_resource_association.test]
+  resource_arn = aws_networkfirewall_rule_group.test.arn
+  policy = jsonencode({
+    Statement = [{
+      Action   = ["network-firewall:ListRuleGroups", "network-firewall:CreateFirewallPolicy"]
+      Effect   = "Allow"
+      Resource = "${aws_networkfirewall_rule_group.test.arn}"
+      Principal = {
+        AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"
+      }
+    }]
+    Version = "2012-10-17"
+  })
 }
 `)
 }
